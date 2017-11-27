@@ -1,0 +1,207 @@
+---
+title: "AN EXAMPLE NETWORK DASHBOARD"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    storyboard: true
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+
+```{r IMPORT LIBRARIES AND DATA, warning=FALSE,echo=FALSE,error=FALSE}
+#MainDashboard$Account <- as.factor(MainDashboard$Account)
+#ggplot(MainDashboard,aes(Account,Total,fill=Success))+geom_bar(stat = "identity")
+library(dplyr)
+library(ggplot2)
+library(highcharter)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+library(reshape2)
+
+# =====Read Current Connectivity Status Data into the "ConnectivityData" df and convert the "Date" column into a date object in R.=====
+#filename <- file.choose()
+filename <- "../Data/November/47/client1.csv"
+path <- dirname(filename)
+files <- list.files(paste(path,"/",sep = ""))
+files <- paste(path,files,sep = "/")
+ConnectivityData <- lapply(files,read.csv,header=TRUE)
+ConnectivityData <- do.call(rbind,ConnectivityData)
+ConnectivityData$Date <- mdy_hms(ConnectivityData$Date)
+ConnectivityData$Date <- date(ConnectivityData$Date)
+
+# =====Read the past Connectivity Status Data and perform the same actions, Also bind the current weeks data to it.=====
+AllData <- read.csv("../Data/All/All.csv")
+AllData <- AllData[,2:length(colnames(AllData))]
+AllData$Date <- date(AllData$Date)
+
+AllData <- rbind(AllData,ConnectivityData)
+
+```
+
+### Welcome !
+***
+This is an example storyboard.
+
+- The code for this dashboard can be seen by clicking the source button of the dashboard (top -right of your screen)
+- The github repository which includes the datafiles (along with the code) can be found [here](http://www.github.com)
+
+
+### MAIN DASHBOARD
+
+
+```{r PRE-ANALYSIS,echo=FALSE,message=FALSE,warning=FALSE}
+
+# =====Get List of Servers Currently Failing.=====
+      CurrentFailedServerList <- as.character(ConnectivityData[grep("fail",as.character(ConnectivityData$Sudo),ignore.case = TRUE),"Affected_Host"])
+
+# =====Extract Week for the Data.=====
+      AllData$Week <- week(AllData$Date)
+
+# =====Adding the "Account" Variable to the variable FailedServerAnalysis.Just Excluding Jumpboxes and Node2s from the Analysis as they Skew the accounts to which they belong by changinig the "Account" for them in the Current Weeks Data as "Node1 or Node2" and in variable FailedServerDetails "Type" to "Node1 or Node2"=====
+    # Define the Special Servers.  
+      SpecialServers <- data.frame(ServerIP = c("127.0.0.1","127.18.125.25","111.24.8.64","111.24.8.63","111.12.1.121","111.12.2.12"),Type = c("Node1","Node1","Node2","Node2","Other","Other"),stringsAsFactors = FALSE)
+        
+        ConnectivityData$Account<-as.character(ConnectivityData$Account)
+        AllData$Account<-as.character(AllData$Account)
+        
+        AllData[AllData$Affected_Host %in% SpecialServers$ServerIP,"Account"] <- "Node1 or Node2"
+        ConnectivityData[ConnectivityData$Affected_Host %in% SpecialServers$ServerIP,"Account"] <- "Node1 or Node2"
+        
+        ConnectivityData$Account<-as.factor(ConnectivityData$Account)
+        AllData$Account<-as.factor(AllData$Account)
+        
+        ConnectivityData <- ConnectivityData %>% filter(Account!="Node1 or Node2")
+        AllData <- AllData %>% filter(Account!="Node1 or Node2")
+
+# =====Create a DataFrame to Analyse Faliures for all Week (basically to Analyse the Complete Servers). Find the Failed Servers in the AllData and create a new column 'Week' which contains the weeks seperated by "," on which the particular server had failed.=====
+      FailedServerDetails <- data.frame(as.matrix(aggregate(Week~Affected_Host,data = AllData[AllData$Sudo=='Failed',],FUN=function(myweek){paste(myweek,collapse = ",")})),stringsAsFactors = FALSE)
+
+        FailedServerDetails$Type <- "Endpoints"
+        FailedServerDetails[FailedServerDetails$Affected_Host %in% SpecialServers$ServerIP,"Type"] <- "Node1 or Node2"
+        FailedServerDetails[FailedServerDetails$Affected_Host %in% SpecialServers$ServerIP,"Type"] <- "Node1 or Node2"
+
+        AllData$Affected_Host <- as.character(AllData$Affected_Host)
+        i <- 1
+        for(server in FailedServerDetails$Affected_Host){
+        if(server %in% SpecialServers$ServerIP){
+          FailedServerDetails$Account[i] <- "Node1 or Node2"
+          i <- i+1
+        }  
+          else {
+        FailedServerDetails$Account[i] <- as.character(unique(AllData[grep(server,AllData$Affected_Host),"Account"]))
+        i<-i+1
+        }
+        }
+        AllData$Affected_Host <- as.factor(AllData$Affected_Host)
+
+
+
+# =====Set Current Week and the Starting Week from which the Analysis will be starting. Also Setting the defalut streak for failed servers as 1=====
+      CurrentWeek <- week(ConnectivityData$Date[1])
+      StartingWeek <-week(AllData$Date[1])
+      FailedServerDetails$Streak <- 1
+      TempWeek <- CurrentWeek
+
+
+# =====Create a df "StreakServers" which will help in analysis of server's streak information by parsing the "Week" column of the FailedServerDetail and adding 1 to the default Streak of 1 to the failed Server.=====
+      StreakServers <- FailedServerDetails
+      while(TempWeek > StartingWeek){
+        StreakServers <- StreakServers[grep(as.character(TempWeek-1),StreakServers$Week),]
+        StreakServers$Streak <- StreakServers$Streak+1
+        FailedServerDetails[FailedServerDetails$Affected_Host %in% StreakServers$Affected_Host,"Streak"] <-FailedServerDetails[FailedServerDetails$Affected_Host %in% StreakServers$Affected_Host,"Streak"]+1
+        TempWeek <- TempWeek - 1
+      }
+      FailedServerDetails[grep(CurrentWeek,FailedServerDetails$Week,invert = TRUE),"Streak"] <- 0
+
+
+# =====Finding the total times a server has Failed.=====
+      FailedServerDetails$Total <- 1
+      for(i in 1:length(FailedServerDetails$Affected_Host)){
+        FailedServerDetails$Total[i] <- length(strsplit(FailedServerDetails$Week[i],split=",")[[1]])
+      }
+      FailedServerDetails <- FailedServerDetails[order(-FailedServerDetails$Streak),]
+
+
+# =====Extracting a df from the "FailedServerDetails" containing details only of Servers which have failed for the current week.=====
+      CurrentWeekFailedServerDetails <- FailedServerDetails %>% filter(Affected_Host %in% CurrentFailedServerList)
+      CurrentWeekFailedServerDetails <- CurrentWeekFailedServerDetails[order(-CurrentWeekFailedServerDetails$Total),]
+      CurrentWeekFailedServerDetails <- CurrentWeekFailedServerDetails[order(-CurrentWeekFailedServerDetails$Streak),]
+      
+# ====Finding the Point of Faliure.=====
+      CurrentWeekFailedServerDetails$PointOfFaliure <- ""
+      i<-1
+      for(server in CurrentWeekFailedServerDetails$Affected_Host){
+        if(ConnectivityData[grep(server,ConnectivityData$Affected_Host),"Sudo"]=="Failed"){
+          CurrentWeekFailedServerDetails$PointOfFaliure[i] <- "Sudo"
+        }
+        if(ConnectivityData[grep(server,ConnectivityData$Affected_Host),"Authentication"]=="Failed"){
+          CurrentWeekFailedServerDetails$PointOfFaliure[i] <- "Authentication"
+        }
+        if(ConnectivityData[grep(server,ConnectivityData$Affected_Host),"SSH_to_endpoint"]=="Failed"){
+          CurrentWeekFailedServerDetails$PointOfFaliure[i] <- "SSH"
+        }
+        if(ConnectivityData[grep(server,ConnectivityData$Affected_Host),"Port_Check_Status"]=="Failed"){
+          CurrentWeekFailedServerDetails$PointOfFaliure[i] <- "PortCheck"
+        }
+        
+        if(ConnectivityData[grep(server,ConnectivityData$Affected_Host),"Node1_Status"]=="Failed"){
+          CurrentWeekFailedServerDetails$PointOfFaliure[i] <- "Node1"
+        }
+        i<-i+1
+      }
+      
+            
+```
+
+```{r DASHBOARD :MAIN DASHBOARD,echo=FALSE}
+
+# ===== Count the number of servers which have failed. Also Create a new column which says how many servers are on a streak since last week.=====
+      ConnectivityData <- mutate(ConnectivityData,Status = ifelse(Sudo=="Success",1,0))
+      ConnectivityData <- mutate(ConnectivityData,CheckStatus=ifelse(Sudo=="Success",0,1))
+      ConnectivityData$Streak <- 0
+      ServersOnStreak <- CurrentWeekFailedServerDetails %>% filter(Streak > 1) %>% select(Affected_Host)
+      ConnectivityData <- ConnectivityData %>% mutate(Streak = ifelse(Affected_Host %in% ServersOnStreak$Affected_Host,1,0))
+
+
+# ===== Summarise the "ConnectivityData" df.=====
+      MainDashboard <- ConnectivityData %>% group_by(Account) %>% summarise(Total = length(Affected_Host),Success = sum(Status),Failed = sum(CheckStatus),On.A.Streak = sum(Streak))
+
+
+# ===== Create the Graph =====      
+      melt(MainDashboard,"Account") %>% hchart("column",hcaes(x="Account",y="value",group="variable"))
+
+```
+
+
+### ACCOUNT SUMMARY
+```{r}
+MainDashboard %>% kable("html",escape=F) %>% kable_styling("hover")%>%scroll_box(height="500px")
+```
+
+
+### FAILED SERVERS OF CURRENT WEEK
+
+```{r DASHBOARD :CURRENT WEEKS FAILURES, echo= FALSE,warning=FALSE,message=FALSE}
+
+# ===== Dashboard for Details on Current Weeks Falilures =====
+      CurrentWeekFailedServerDetails %>% mutate(Total = cell_spec(Total,"html",color=ifelse(Total > 1,"red","black")))%>% kable("html", escape = F) %>% kable_styling("hover", full_width = F)%>%scroll_box(height="500px")
+
+```
+
+
+
+### CURRENT WEEKS STATUS OF ALL SERVERS
+
+```{r DASHBOARD :CURRENT WEEKS DATA, echo=FALSE}
+
+# ===== Dashboard displaying details for all connectivity status for this week Successful as well as Failed.=====
+      ConnectivityData%>%select(-c(Status,CheckStatus)) %>% kable("html",escape = F) %>% kable_styling("hover", full_width = F)%>%scroll_box(height="500px")
+
+```
+
+
