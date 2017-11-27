@@ -48,7 +48,7 @@ AllData <- rbind(AllData,ConnectivityData)
 This is an example storyboard.
 
 - The code for this dashboard can be seen by clicking the source button of the dashboard (top -right of your screen)
-- The github repository which includes the datafiles (along with the code) can be found [here](http://www.github.com)
+- The github repository which includes the datafiles (along with the code) can be found [here](https://github.com/gauravsatav/NetworkDashboard)
 
 
 ### MAIN DASHBOARD
