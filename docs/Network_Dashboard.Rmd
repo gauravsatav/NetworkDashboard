@@ -44,7 +44,6 @@ AllData <- rbind(AllData,ConnectivityData)
 ```
 
 ### Welcome !
-***
 This is an example storyboard.
 
 - The code for this dashboard can be seen by clicking the source button of the dashboard (top -right of your screen)
